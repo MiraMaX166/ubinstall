@@ -1,0 +1,437 @@
+#!/bin/bash
+
+TITLE="UBLinux Installation"
+Host="ublinux-sample"
+Domen="local.domean"
+User_name="superadmin"
+User_pass="123"
+lang="EN"
+dev=""
+
+dir=$(realpath $0 | sed 's/\/bin\/ubinstall//g' )
+
+path_mount="/mnt/dst"
+agreement="${dir}/share/ubinstall/agreement/EULA.txt"
+log="${dir}/share/ubinstall/log/ubinstall.log"
+
+. ${dir}/lib/libui-sh/libui.sh
+
+get_list_block_device()
+{
+	local temp i
+	list_dev=""
+	list_dev_r=""
+	i=0
+	temp=(${list_dev_r[@]} $(ls /dev | grep sd[a-Z]$   && ls /dev | grep nvme[0-9]n[0-9]$ ))
+	list_dev=()
+
+	for line in "${temp[@]}";
+	do
+
+		list_dev[$i]=$line
+		(( i++ ))
+		list_dev[$i]=""
+		(( i++ ))
+
+	done
+}
+
+get_list_logical_device()
+{
+	local temp i
+	list_dev_logical=""
+	list_dev_logical_r=""
+	i=0
+	temp=(${list_dev_logical_r[@]} $(ls /dev | grep sd[a-Z][0-9]   && ls /dev | grep nvme[0-9]n[0-9]p[0-9] ))
+	list_dev_logical=()
+
+	for line in "${temp[@]}";
+	do
+
+		list_dev_logical[$i]=$line
+		(( i++ ))
+		list_dev_logical[$i]=""
+		(( i++ ))
+		echo "$line" >> $log
+
+	done
+}
+
+ind_disk()
+{
+	if [[ $1 =~ 'sd' ]]; then
+		echo "1"
+	fi
+
+	if [[ $1 =~ 'nvme' ]]; then
+		echo "p1"
+	fi
+}
+
+auto_prepare_disk()
+{
+
+	echo ";" | sfdisk $dev >> $log
+	mkfs.ext4 -F "${dev}${flag}" >> $log
+
+}
+
+manual_partitioning_disk()
+{
+	point=("$Auto" "" "$Manual" "")
+	_dia_ask_option no "$HMM" "\n\n${AMM}" required "${point[@]}" || base_menu
+	mode1=$ANSWER_OPTION
+
+	case $mode1 in
+		"$Auto") interactive_auto_prepare;;
+		"$Manual") cfdisk /dev/$dev;;
+	esac
+	
+}
+
+create_swap()
+{
+	echo "Create swap file $1 Mb" >> $log
+}
+
+inst()
+{
+	local i
+
+	mkdir $path_mount
+	mount "${1}" $path_mount
+
+	cd ${dir}
+	cd ../..
+	cp -r * $path_mount
+	echo "Install system" >> $log
+
+	umount "${1}"
+}
+
+#get_list_components()
+#{
+	#local i line
+
+	#i=0
+
+	#while read line;
+	#do
+		#list_comp[$i]=$(echo $line | grep "\[$distr\]" | cut -d'|' -f1,2)
+		
+		#if [ "${list_comp[$i]}" != "" ]; then
+			#(( i++ ))
+		#fi
+
+	#done < "./etc/components.txt"
+
+	#i=0
+
+	#for line in "${list_comp[@]}";
+	#do
+
+		#list_comp_name[$i]=$(echo $line | cut -d'|' -f1)
+		#(( i++ ))
+		#list_comp_name[$i]=.
+		#(( i++ ))
+		#list_comp_name[$i]=OFF
+		#(( i++ ))
+
+	#done
+#}
+
+
+get_list_distrub()
+{
+	list_distrub=("Ublinux Desktop" "" "Ublinux Server" "")
+}
+
+#install_components()
+#{
+	#local i j
+
+	#mount "${1}" /mnt
+
+	#for j in "${comp[@]}"
+	#do
+
+		#while [[ "${list_comp[$i]}" != "$j"* ]]; 
+		#do
+			#(( i++ ))
+		#done
+	
+		#path=$(echo "${list_comp[$i]}" | grep "$j" | cut -d'|' -f2)
+		#path=${path/ /}
+		#i=0
+		#inst $path
+
+	#done
+
+	#genfstab -U /mnt >> /mnt/etc/fstab
+#}
+
+configurate_system()
+{
+	hostname $1
+
+	echo -e "$3/n$3" | passwd $2
+}
+
+
+lang_menu()
+{
+	local lang_list ch_lang
+
+	lang_list=("English" "" "Русский" "")
+	_dia_ask_option no "Choose Language" "\n\nPlease choose language" required "${lang_list[@]}" || exit
+	ch_lang=$ANSWER_OPTION
+
+	case $ch_lang in
+		"English") lang="EN" ;;
+		"Русский") lang="RU" ;;
+	esac
+}
+
+license_agreement()
+{
+	license=$(cat $agreement)
+	_dia_notify "$license"
+}
+
+
+base_menu()
+{
+
+	_dia_ask_option no "$HBM" "\n\n${ABM}." required "${base_point[@]}" || exit
+	answer=$ANSWER_OPTION
+
+	case $answer in
+		"$PDISK") interactive_disk ;;
+		"$PCOM") interactive_components ;;
+		"$PCONF") interactive_configurate ;;
+		"$PIB") interactive_bootloader ;;
+		"$PEX") exit;;
+	esac
+
+	base_menu
+
+}
+
+choose_device()
+	{
+		get_list_block_device
+		list_dev_menu=("${list_dev[@]}" "$P_other" "" "$P_view" "")
+		_dia_ask_option no "$HDM" "\n\n${ADM}" required "${list_dev_menu[@]}" || interactive_disk
+		dev=$ANSWER_OPTION
+		flag=$(ind_disk $dev)
+		echo ${dev}${flag} >> $log 
+
+		if [ "$dev" == "$P_other" ]; then
+			_dia_ask_string "$MD" "/dev/sda" || choose_device
+			dev=$ANSWER_STRING
+		fi
+
+		if [ "$dev" == "$P_view" ]; then
+			_dia_notify "$(ls /dev)"
+			choose_device
+		fi
+	}
+
+choose_logical_device()
+	{
+		get_list_logical_device
+		list_dev_log_menu=("${list_dev[@]}" "$P_other" "" "$P_view" "")
+		_dia_ask_option no "$HDM" "\n\n${ADM}" required "${list_dev_log_menu[@]}" || interactive_disk
+		dev_l=$ANSWER_OPTION
+
+	}
+
+interactive_disk()
+{
+	local point choose_device
+
+
+	#point=("$Auto" "" "$Manual" "")
+	#_dia_ask_option no "$HMM" "\n\n${AMM}" required "${point[@]}" || base_menu
+	#mode=$ANSWER_OPTION
+	mode="$Manual"
+
+
+	manual_menu()
+	{
+		action_list=("$PPD" "" "$PFD" "" "$PCS" "" "$PD" "")
+		_dia_ask_option no "$HPM" "\n\n${APM}" required "${action_list[@]}" || base_menu
+		action=$ANSWER_OPTION
+
+		case $action in
+			"$PPD") choose_device || manual_menu
+					manual_partitioning_disk;;
+			"$PFD") choose_filesystem;;
+			"$PCS") swap_menu;;
+			"$PD") base_menu;;
+		esac
+
+		manual_menu
+	}
+
+	swap_menu()
+	{
+		local size_list
+
+		size_list=("512" "" "1024" "" "2048" "" "$CUSTOM" "")
+		_dia_ask_option no "$HSM" "\n\n${ASM}" required "${size_list[@]}" || manual_menu
+		swap_size=$ANSWER_OPTION
+
+		if [ "$swap_size" == "$CUSTOM" ]; then
+			swap_dialog
+		else
+			create_swap $swap_size
+		fi
+	}
+
+	swap_dialog()
+	{
+		_dia_ask_number "$SD" "1" "" "1024" || manual_menu
+		swap_size=$ANSWER_NUMBER
+		create_swap $swap_size
+	}
+
+	choose_filesystem()
+	{
+		local fs i j list_dev_ch
+		j=0
+
+		get_list_logical_device
+
+		fs_list=("ext4"  "" "fat32" "")
+		_dia_ask_option no "$HFM" "\n\n${AFM}." required "${fs_list[@]}" || manual_menu
+		fs=$ANSWER_OPTION
+
+		for (( i=0; i <= ${#list_dev_logical[*]}; i=i+2 ))
+		do
+
+			list_dev_ch[$j]=${list_dev_logical[$i]}
+			(( j++ ))
+			list_dev_ch[$j]=.
+			(( j++ ))
+			list_dev_ch[$j]=OFF
+			(( j++ ))
+
+		done
+
+		_dia_ask_checklist "$SP" 0 "${list_dev_ch[@]}" || manual_menu
+		pat=("${ANSWER_CHECKLIST[@]}")
+
+		mkfs."${fs}" -F "/dev/$pat"
+		manual_menu
+
+	}
+
+	interactive_auto_prepare()
+	{
+		_dia_inform "$PW"
+		auto_prepare_disk
+		_dia_notify  "$DP"
+	}
+
+	case $mode in
+		"$Auto") interactive_auto_prepare;;
+		"$Manual") manual_menu;;
+	esac
+
+}
+
+interactive_components()
+{
+
+	#get_list_distrub
+	#list_distrub=("${list_distrub[@]}" "$NI" "")
+	#_dia_ask_option no "$HCD" "\n\n${ACD}." required "${list_distrub[@]}" || base_menu
+
+	#distr=$ANSWER_OPTION
+	#distr=$(echo $distr | cut -d' ' -f2)
+	#distr=${distr,,}
+
+	#get_list_components
+	#_dia_ask_checklist "$SPA" 0 "${list_comp_name[@]}" || base_menu
+	#comp=("${ANSWER_CHECKLIST[@]}")
+
+	get_list_logical_device
+	list_dev_menu=("${list_dev_logical[@]}" "$P_other" "" "$P_view" "")
+	_dia_ask_option no "$HDM" "\n\n${ADM}" required "${list_dev_menu[@]}" || base_menu
+	dev_c=$ANSWER_OPTION
+
+	#if [ "$comp" != "" ]; then
+
+		_dia_inform "Install Components"
+		inst "/dev/${dev_c}"
+		_dia_notify "Install Complite!"
+	#fi
+ 
+	base_menu
+}
+
+interactive_configurate()
+{
+	_dia_ask_string "$HN" "ublinux-sample"
+	Host=$ANSWER_STRING
+
+	#_dia_ask_string "$DM" "local.domean"
+	#Domen=$ANSWER_STRING
+
+	#_dia_ask_string "$UN" "superadmin"
+	#User_name=$ANSWER_STRING
+
+	_dia_ask_string "$UP root" "123"
+	User_pass=$ANSWER_STRING
+
+	configurate_system "$Host" root $User_pass
+
+	interactive_components
+
+}
+
+interactive_bootloader()
+{
+
+	mbr_path="$path_mount/boot/syslinux/bios/mbr.bin"
+	extlinux="$path_mount/boot/syslinux/install/extlinux"
+
+	get_list_block_device
+	list_dev_menu=("${list_dev[@]}" "$P_other" "" "$P_view" "")
+	_dia_ask_option no "$HDM" "\n\n${ADM}" required "${list_dev_menu[@]}" || base_menu
+	dev_d=$ANSWER_OPTION
+
+	flag=$(ind_disk $dev_d)
+	dev_r="${dev_d}${flag}"
+	sed=${dev_r//\//\\\/}
+
+	#list_dev_menu=("${list_dev[@]}" "$P_other" "" "$P_view" "")
+	#_dia_ask_option no "$HDM" "\n\n${ADM}" required "${list_dev_menu[@]}" || base_menu
+	#dev_r=$ANSWER_OPTION
+
+	_dia_inform "Install bootloader"
+
+	echo -e "a\nw" | fdisk ${dev_d}
+	e2label ${dev_r} ublinux
+
+	mount ${dev_r} $path_mount
+	$extlinux -i $path_mount/boot/syslinux
+	read
+
+	dd bs=440 count=1 conv=notrunc if=${mbr_path} of=${dev_d}5
+
+	umount ${dev_r}
+
+	_dia_notify "Install Complite!"
+
+}
+
+lang_menu
+. ${dir}/share/ubinstall/lang/${lang}.sh
+
+base_point=("$PDISK" "" "$PCONF" "" "$PCOM" "" "$PIB" "" "$PEX" "")
+
+_dia_notify "$HELLO"
+license_agreement
+base_menu
