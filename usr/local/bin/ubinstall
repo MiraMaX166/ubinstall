@@ -11,6 +11,7 @@ dev=""
 dir=$(realpath $0 | sed 's/\/bin\/ubinstall//g' )
 
 path_mount="/mnt/dst"
+path_copy="/memory/data/from/0"
 agreement="${dir}/share/ubinstall/agreement/EULA.txt"
 log="${dir}/share/ubinstall/log/ubinstall.log"
 
@@ -18,7 +19,7 @@ log="${dir}/share/ubinstall/log/ubinstall.log"
 
 get_list_block_device()
 {
-	local temp i
+	local temp i model size
 	list_dev=""
 	list_dev_r=""
 	i=0
@@ -27,8 +28,10 @@ get_list_block_device()
 
 	for line in "${temp[@]}";
 	do
+		model=$(fdisk -l /dev/$line | grep model | cut -d":" -f2 )
+		size=$(fdisk -l /dev/$line | grep iB | cut -d' ' -f3,4 | cut -d',' -f1,2 )
 
-		list_dev[$i]=$line
+		list_dev[$i]="${line}${model} ${size}"
 		(( i++ ))
 		list_dev[$i]=""
 		(( i++ ))
@@ -71,8 +74,7 @@ ind_disk()
 auto_prepare_disk()
 {
 
-	echo ";" | sfdisk $dev >> $log
-	mkfs.ext4 -F "${dev}${flag}" >> $log
+	echo ";" | sfdisk "/dev/$dev" >> $log
 
 }
 
@@ -101,8 +103,8 @@ inst()
 	mkdir $path_mount
 	mount "${1}" $path_mount
 
-	cd ${dir}
-	cd ../..
+	cd $path_copy
+
 	cp -r * $path_mount
 	echo "Install system" >> $log
 
@@ -172,9 +174,42 @@ get_list_distrub()
 
 configurate_system()
 {
-	hostname $1
 
-	echo -e "$3/n$3" | passwd $2
+	local file_system path_root path_shadow path_temp
+
+	path_root="${path_mount}/ublinux/rootcopy"
+	path_shadow="/etc/shadow"
+	path_temp="/tmp/shadow"
+
+	get_list_logical_device
+	list_dev_menu=("${list_dev_logical[@]}")
+	_dia_ask_option no "$HDM" "\n\n${ADM}" required "${list_dev_menu[@]}" || base_menu
+	dev_c=/dev/$ANSWER_OPTION
+
+	mkdir $path_mount
+	mount ${dev_c} $path_mount
+
+	if ! [ -d $path_root ]; then
+		_dia_notify "Not Correct OS"
+		return 1
+
+	fi
+
+	cd $path_root
+	mkdir etc
+	touch etc/hostname
+	echo $1 > etc/hostname
+	cd ${dir}
+
+	cp $path_shadow /tmp
+	echo -e "${3}\n${3}" | passwd $2
+
+	cp $path_shadow $path_root/etc
+	cp $path_temp /etc
+	rm $path_temp
+
+	umount ${dev_c}
+	_dia_notify "System Configurate"
 }
 
 
@@ -222,7 +257,7 @@ choose_device()
 		get_list_block_device
 		list_dev_menu=("${list_dev[@]}" "$P_other" "" "$P_view" "")
 		_dia_ask_option no "$HDM" "\n\n${ADM}" required "${list_dev_menu[@]}" || interactive_disk
-		dev=$ANSWER_OPTION
+		dev=$(echo $ANSWER_OPTION | cut -d' ' -f1)
 		flag=$(ind_disk $dev)
 		echo ${dev}${flag} >> $log 
 
@@ -322,7 +357,7 @@ interactive_disk()
 		_dia_ask_checklist "$SP" 0 "${list_dev_ch[@]}" || manual_menu
 		pat=("${ANSWER_CHECKLIST[@]}")
 
-		mkfs."${fs}" -F "/dev/$pat"
+		mkfs."${fs}" -F "/dev/$pat" > /dev/null
 		manual_menu
 
 	}
@@ -344,29 +379,16 @@ interactive_disk()
 interactive_components()
 {
 
-	#get_list_distrub
-	#list_distrub=("${list_distrub[@]}" "$NI" "")
-	#_dia_ask_option no "$HCD" "\n\n${ACD}." required "${list_distrub[@]}" || base_menu
-
-	#distr=$ANSWER_OPTION
-	#distr=$(echo $distr | cut -d' ' -f2)
-	#distr=${distr,,}
-
-	#get_list_components
-	#_dia_ask_checklist "$SPA" 0 "${list_comp_name[@]}" || base_menu
-	#comp=("${ANSWER_CHECKLIST[@]}")
 
 	get_list_logical_device
 	list_dev_menu=("${list_dev_logical[@]}" "$P_other" "" "$P_view" "")
 	_dia_ask_option no "$HDM" "\n\n${ADM}" required "${list_dev_menu[@]}" || base_menu
 	dev_c=$ANSWER_OPTION
 
-	#if [ "$comp" != "" ]; then
 
-		_dia_inform "Install Components"
-		inst "/dev/${dev_c}"
-		_dia_notify "Install Complite!"
-	#fi
+	_dia_inform "Install Components"
+	inst "/dev/${dev_c}"
+	_dia_notify "Install Complite!"
  
 	base_menu
 }
@@ -382,33 +404,31 @@ interactive_configurate()
 	#_dia_ask_string "$UN" "superadmin"
 	#User_name=$ANSWER_STRING
 
-	_dia_ask_string "$UP root" "123"
-	User_pass=$ANSWER_STRING
+	ANSWER=$(_dia_dialog --passwordbox  "$UP superadmin" 8 65)
+	User_pass=$ANSWER
 
-	configurate_system "$Host" root $User_pass
+	configurate_system "$Host" superadmin "${User_pass}"
 
-	interactive_components
+	base_menu
 
 }
 
 interactive_bootloader()
 {
 
-	mbr_path="$path_mount/boot/syslinux/bios/mbr.bin"
-	extlinux="$path_mount/boot/syslinux/install/extlinux"
+	mbr_path="$path_copy/boot/syslinux/bios/mbr.bin"
+	extlinux="$path_copy/boot/syslinux/install/extlinux"
 
 	get_list_block_device
 	list_dev_menu=("${list_dev[@]}" "$P_other" "" "$P_view" "")
 	_dia_ask_option no "$HDM" "\n\n${ADM}" required "${list_dev_menu[@]}" || base_menu
-	dev_d=$ANSWER_OPTION
+	dev_d=$(echo /dev/$ANSWER_OPTION | cut -d' ' -f1) 
 
 	flag=$(ind_disk $dev_d)
 	dev_r="${dev_d}${flag}"
 	sed=${dev_r//\//\\\/}
 
-	#list_dev_menu=("${list_dev[@]}" "$P_other" "" "$P_view" "")
-	#_dia_ask_option no "$HDM" "\n\n${ADM}" required "${list_dev_menu[@]}" || base_menu
-	#dev_r=$ANSWER_OPTION
+	mkdir $path_mount
 
 	_dia_inform "Install bootloader"
 
@@ -417,9 +437,8 @@ interactive_bootloader()
 
 	mount ${dev_r} $path_mount
 	$extlinux -i $path_mount/boot/syslinux
-	read
 
-	dd bs=440 count=1 conv=notrunc if=${mbr_path} of=${dev_d}5
+	dd bs=440 count=1 conv=notrunc if=${mbr_path} of=${dev_d}
 
 	umount ${dev_r}
 
@@ -430,7 +449,7 @@ interactive_bootloader()
 lang_menu
 . ${dir}/share/ubinstall/lang/${lang}.sh
 
-base_point=("$PDISK" "" "$PCONF" "" "$PCOM" "" "$PIB" "" "$PEX" "")
+base_point=("$PDISK" "" "$PCOM" "" "$PCONF" "" "$PIB" "" "$PEX" "")
 
 _dia_notify "$HELLO"
 license_agreement
